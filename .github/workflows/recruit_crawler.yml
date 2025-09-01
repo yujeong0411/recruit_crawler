@@ -1,0 +1,30 @@
+name: Saramin Crawler
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # 매일 0시(UTC) 실행 → 한국 시간은 오전 9시
+  workflow_dispatch: # 필요 시 수동 실행 버튼도 활성화
+
+jobs:
+  run-crawler:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 pandas
+
+      - name: Run crawler
+        env:
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+        run: python saramin_crawler.py
