@@ -7,13 +7,13 @@ from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 
 class SaraminCrawler:
     def __init__(self):
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        self.keywords = ["데이터", "의료 데이터", "헬스케어", "병원 데이터", "병원 전산", "신입", "기획", "PM"]
         self.base_url = "https://www.saramin.co.kr/zf_user/search/recruit"
         
         # 파라미터들을 딕셔너리로 정리!
@@ -212,6 +212,7 @@ class SaraminCrawler:
             print(f"⚠️ 공고 정보 추출 실패 : {e}")
             return None
 
+
     def save_to_csv(self, jobs, filename=None):
         """결과를 csv로 저장"""
         if not jobs:
@@ -236,34 +237,99 @@ class SaraminCrawler:
             return
         
         # 이메일 내용 생성
-        subject = f"🔔 새 채용공고 {len(jobs)}개 알림!"
+        subject = f"🔔 새 채용공고 {len(jobs)}개 발견! - {datetime.now().strftime('%m/%d')}"
         
-        body = f"""
-안녕하세요! 새로운 채용공고 {len(jobs)}개를 찾았습니다.
+        # HTML 템플릿
+        html_body = f"""
+        <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body {{ font-family: 'Apple SD Gothic Neo', Arial, sans-serif; }}
+                    .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                            color: white; padding: 20px; text-align: center; }}
+                    .job-item {{ border: 1px solid #ddd; margin: 10px 0; padding: 15px; 
+                            border-radius: 8px; background: #fafafa; }}
+                    .job-title {{ font-size: 18px; font-weight: bold; color: #2c3e50; }}
+                    .company {{ color: #e74c3c; font-weight: bold; margin: 5px 0; }}
+                    .details {{ color: #7f8c8d; font-size: 14px; margin: 5px 0; }}
+                    .btn {{ background: #3498db; color: white; padding: 8px 16px; 
+                        text-decoration: none; border-radius: 4px; display: inline-block; }}
+                    .summary {{ background: #ecf0f1; padding: 15px; margin: 20px 0; border-radius: 8px; }}
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>🎯 채용공고 자동 수집 결과</h1>
+                    <p>{datetime.now().strftime('%Y년 %m월 %d일')} 수집 완료</p>
+                </div>
+                
+                <div class="summary">
+                    <h2>📊 수집 현황</h2>
+                    <p>• <strong>총 {len(jobs)}개</strong> 공고 발견</p>
+                    <p>• 키워드별 분포: {self._get_keyword_stats(jobs)}</p>
+                    <p>• 📎 <strong>전체 데이터는 첨부된 CSV 파일을 확인하세요!</strong></p>
+                </div>
+                
+                <h2>🔥 주요 공고 미리보기 (최대 10개)</h2>
+        """
 
-"""
-        for job in jobs[:10]:  # 최대 10개만 미리보기
-            body += f"""
-📌 {job['title']}
-🏢 {job['company']}
-📍 {job['location']} | {job['career']}
-🎓 {job['education']} | {job['work_type']}
-⏰ {job['deadline']}
-🔗 {job['link']}
-----------------------------------------
-"""
+        # 상위 10개 공고만 이메일에 표시
+        for job in jobs[:10]:  
+            full_link = f"https://www.saramin.co.kr{job['link']}"
+
+            html_body += f"""
+            <div class="job-item">
+                <div class="job-title">{job['title']}</div>
+                <div class="company">🏢 {job['company']}</div>
+                <div class="details">
+                    📍 {' '.join(job['location']) if isinstance(job['location'], list) else job['location']} | 
+                    👔 {job['career']} | 
+                    🎓 {job['education']} | 
+                    ⏰ {job['deadline']}
+                </div>
+                <a href="{full_link}" class="btn" target="_blank">지원하기 →</a>
+            </div>
+            """
             
         if len(jobs) > 10:
-            body += f"\n... 외 {len(jobs)-10}개 더 있습니다."
+            html_body += f"""
+            <div style="text-align: center; padding: 20px; background: #fff3cd; border-radius: 8px; margin: 20px 0;">
+                <h3>📋 나머지 {len(jobs)-10}개 공고</h3>
+                <p>전체 공고는 <strong>첨부된 CSV 파일</strong>에서 확인하세요!</p>
+            </div>
+            """
+        
+        html_body += """
+                <div style="text-align: center; margin-top: 30px; padding: 20px; background: #f8f9fa;">
+                    <p>🤖 Python 자동화 시스템이 수집했습니다</p>
+                    <p style="font-size: 12px; color: #6c757d;">
+                        매일 오전 9시에 새로운 공고를 확인해드립니다
+                    </p>
+                </div>
+            </body>
+        </html>
+        """
 
         # 이메일 전송
         try:
-            msg = MIMEMultipart()
+            msg = MIMEMultipart('alternative')
             msg['From'] = email_config['sender_email']
             msg['To'] = email_config['receiver_email']
             msg['Subject'] = subject
 
-            msg.attach(MIMEText(body, 'plain', 'utf-8'))
+            # HTML 내용 첨부
+            html_part = MIMEText(html_body, 'html', 'utf-8')
+            msg.attach(html_part)
+
+            # CSV 파일 첨부
+            csv_filename = self.save_to_csv(jobs)  # CSV 파일 생성
+            if csv_filename and os.path.exists(csv_filename):
+                with open(csv_filename, 'rb') as attachment:
+                    part = MIMEApplication(attachment.read(), _subtype='csv')
+                    part.add_header('Content-Disposition', 'attachment', 
+                                filename=f"채용공고_{datetime.now().strftime('%Y%m%d')}.csv")
+                    msg.attach(part)
 
             server = smtplib.SMTP('smtp.gmail.com', 587)
             server.starttls()
@@ -275,6 +341,16 @@ class SaraminCrawler:
             
         except Exception as e:
             print(f"❌ 이메일 전송 실패: {e}")
+
+    def _get_keyword_stats(self, jobs):
+        """키워드별 통계 생성"""
+        keyword_counts = {}
+        for job in jobs:
+            keyword = job.get('keyword', '기타')
+            keyword_counts[keyword] = keyword_counts.get(keyword, 0) + 1
+        
+        stats = [f"{k}({v}개)" for k, v in keyword_counts.items()]
+        return ", ".join(stats)
 
     def run_advanced_crawler(self, email_config=None):
         """여러가지 필터들을 활용한 크롤링"""
@@ -298,7 +374,7 @@ class SaraminCrawler:
                 'work_day': ['유연근무제']
             },
             {
-                'name': '헬스케어 기획직 (학교 제외)',
+                'name': '헬스케어 기획직',
                 'keyword': '헬스케어',
                 'job_types': ['정규직'],
                 'exclude_keywords': ['학교'],
@@ -330,7 +406,7 @@ class SaraminCrawler:
         print(f"\n🎉 총 {len(unique_jobs)}개 고유 공고 수집!")
 
         # CSV 저장
-        filename = self.save_to_csv(unique_jobs)
+        # filename = self.save_to_csv(unique_jobs)
         
         # 이메일 알림
         if email_config and unique_jobs:
@@ -360,6 +436,7 @@ if __name__ == "__main__":
     print("="*60)
 
     # 이메일 설정 (선택사항)
+    
     email_config = {
         'sender_email': os.environ.get('EMAIL_SENDER'),
         'receiver_email': os.environ.get('EMAIL_RECEIVER'),
