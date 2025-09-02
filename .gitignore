@@ -233,7 +233,7 @@ $RECYCLE.BIN/
 *.lnk
 
 # 파일
-.csv
-.xlxs
+*.csv
+*.xlxs
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,python,windows,venv,dotenv
