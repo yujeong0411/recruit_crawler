@@ -14,7 +14,6 @@ class SaraminCrawler:
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        self.base_url = "https://www.saramin.co.kr/zf_user/search/recruit"
         
         # 파라미터들을 딕셔너리로 정리!
         self.salary_codes = {
@@ -42,7 +41,7 @@ class SaraminCrawler:
             '유연근무제': 'wsh050', '면접후결정': 'wsh090'
         }
 
-    def search_jobs(self, keyword=None, max_pages=3, **filters):
+    def search_jobs(self, keyword=None, **filters):
         """실제 api 엔드포인트 사용한 검색"""
 
         jobs = []
@@ -50,63 +49,82 @@ class SaraminCrawler:
         # 실제 API URL
         api_url = "https://www.saramin.co.kr/zf_user/search/get-recruit-list"
 
-        for page in range(1, max_pages + 1):
-            print(f"'{keyword or '전체'}' 검색 중 ... ({page}/{max_pages} 페이지)")
+        # API 파라미터 (Network 탭에서 발견한 것들)
+        params = {
+            'searchType': 'search',
+            'recruitPage': 1,     # 페이지네이션
+            'recruitSort': 'relation',   # 정렬기준(관련도순)
+            'recruitPageCount': 40,    # 한 폐이지에 보이는 개수
+            'search_optional_item': 'y',
+            'search_done': 'y',
+            'panel_count': 'y',
+            'preview': 'y',
+            'mainSearch': 'n'
+        }
 
+        # 검색어
+        if keyword:
+            params['searchword'] = keyword
 
-            # API 파라미터 (Network 탭에서 발견한 것들)
-            params = {
-                'searchType': 'search',
-                'recruitPage': page,     # 페이지네이션
-                'recruitSort': 'relation',   # 정렬기준(관련도순)
-                'recruitPageCount': 40,    # 한 폐이지에 보이는 개수
-                'search_optional_item': 'y',
-                'search_done': 'y',
-                'panel_count': 'y',
-                'preview': 'y',
-                'mainSearch': 'n'
-            }
+        # 고급 필터 적용
+        self._apply_filters(params, filters)
 
+        try:
+            response = requests.get(api_url, params=params, headers=self.headers)
+            response.raise_for_status()
 
-            # 검색어
-            if keyword:
-                params['searchword'] = keyword
+            # JSON 응답 파싱 : 응답은 json 형태이기때문 '{"count":"283","innerHTML":"<div>...</div>"}'
+            json_data = response.json()
 
-            # 고급 필터 적용
-            self._apply_filters(params, filters)
+            # 전체 공고 수 계산
+            total_count = int(json_data.get('count', '0').replace(',', ''))
 
-            try:
-                response = requests.get(api_url, params=params, headers=self.headers)
-                response.raise_for_status()
+            # 공고가 많으면 5페이지만 크롤링 
+            max_pages = min((total_count + 39) // 40, 5)
 
-                # JSON 응답 파싱 : 응답은 json 형태이기때문 '{"count":"283","innerHTML":"<div>...</div>"}'
-                json_data = response.json()
+            print(f"총 {total_count:,}개 공고 발견! {max_pages}페이지 크롤링 예정")
 
-                if json_data.get('innerHTML'):
-                    # 채용공고 추출
-                    soup = BeautifulSoup(json_data['innerHTML'], 'html.parser')
-                    json_itmes = soup.find_all('div', class_='item_recruit')
+            for page in range(1, max_pages + 1):
+                print(f"📄 {page}/{max_pages} 페이지 수집 중...")
 
-                    if not json_itmes:
-                        print(f"페이지 {page}에서 공고를 찾을 수 없습니다.")
+                params['recruitPage'] = page
+
+                try: 
+                    # 각 페이지마다 새로 API 호출
+                    response = requests.get(api_url, params=params, headers=self.headers)
+                    response.raise_for_status()
+                    json_data = response.json()  # 해당 페이지 데이터
+
+                    if json_data.get('innerHTML'):
+                        # 채용공고 추출
+                        soup = BeautifulSoup(json_data['innerHTML'], 'html.parser')
+                        json_itmes = soup.find_all('div', class_='item_recruit')
+
+                        if not json_itmes:
+                            print(f"페이지 {page}에서 공고를 찾을 수 없습니다.")
+                            break
+
+                        print(f"총 └─ {len(json_itmes)}개 수집")
+
+                        for item in json_itmes:
+                            job_data = self.extract_job_info_from_api(item, keyword or '전체')
+                            if job_data:
+                                jobs.append(job_data)
+                    else:
+                        print(f"페이지 {page}에서 데이터를 받지 못했습니다.")
                         break
 
-                    print(f"총 {json_data.get('count'), '?'}개 공고 중 {len(json_itmes)}개 수집")
+                    time.sleep(1)  # 서버 부하 방지
 
-                    for item in json_itmes:
-                        job_data = self.extract_job_info_from_api(item, keyword or '전체')
-                        if job_data:
-                            jobs.append(job_data)
-                else:
-                    print(f"페이지 {page}에서 데이터를 받지 못했습니다.")
-                    break
-
-                time.sleep(1)  # 서버 부하 방지
-
-            except Exception as e:
-                print(f"페이지 {page} 크롤링 실패: {e}")
-                continue
-
+                except Exception as e:
+                    print(f"❌ 페이지 {page} 크롤링 실패: {e}")
+                    continue
+        
+        except Exception as e:
+            print(f"❌ 초기 데이터 로딩 실패: {e}")
+            return []
+        
+        print(f"✅ '{keyword or '전체'}' 총 {len(jobs)}개 공고 수집 완료!")
         return jobs
     
     def _apply_filters(self, params, filters):
@@ -158,11 +176,11 @@ class SaraminCrawler:
         try:
             # 공고 제목 및 링크
             title_elem = item.select_one('div.area_job > h2.job_tit > a')
-            if title_elem:
-                title = title_elem.get_text(strip=True)
-                link = title_elem.get('href')
-            else:
-                print("공고 제목 없음 -> 에러!!!❌❌")
+            title = title_elem.get_text(strip=True) if title_elem else print("공고명 못찾음❌❌")
+
+            # 링크 처리 (상대경로 → 절대경로 변환)
+            href = title_elem.get('href') if title_elem else ""
+            link = f"https://www.saramin.co.kr{href}" if href else ""
             
             # 회사명
             company_elem = item.select_one('div.area_corp > strong.corp_name > a')
@@ -174,20 +192,39 @@ class SaraminCrawler:
 
             # 위치, 경력 정보
             condition_elem = item.select('div.area_job > div.job_condition > span')
-            location = []
-            if condition_elem:
-                location_elem = condition_elem[0].select('a')
-                for loc in location_elem:
-                    location.append(loc.get_text(strip=True))
 
+            # 기본값 설정
+            location = "지역 없음"  
+            career = "경력 없음"
+            education = "학력 없음"  
+            work_type = "근무형태 없음"
+
+            # 안전하게 인덱스 확인 후 추출
+            if len(condition_elem) > 0:
+                location_elem = condition_elem[0].select('a')
+                location_list = [loc.get_text(strip=True) for loc in location_elem]
+    
+                if len(location_list) >= 2:
+                    # "서울 강남구" 형태로
+                    location = " ".join(location_list)
+                elif len(location_list) == 1:
+                    # "서울" 같이 하나만 있는 경우
+                    location = location_list[0]
+                else:
+                    location = "지역 없음"
+
+            # 경력 
+            if len(condition_elem) > 1:
                 career_elem = condition_elem[1]
                 career = career_elem.get_text(strip=True)
 
-                # 학력
+            # 학력
+            if len(condition_elem) > 2:
                 edu_elem = condition_elem[2]
                 education = edu_elem.get_text(strip=True)
 
-                # 근무 조건
+            # 근무 조건
+            if len(condition_elem) > 3:
                 work_type_elem = condition_elem[3]
                 work_type = work_type_elem.get_text(strip=True)
 
@@ -210,6 +247,7 @@ class SaraminCrawler:
             
         except Exception as e:
             print(f"⚠️ 공고 정보 추출 실패 : {e}")
+            print(f"⚠️ 문제 공고 HTML 구조: {item}")
             return None
 
 
@@ -276,8 +314,6 @@ class SaraminCrawler:
 
         # 상위 10개 공고만 이메일에 표시
         for job in jobs[:10]:  
-            full_link = f"https://www.saramin.co.kr{job['link']}"
-
             html_body += f"""
             <div class="job-item">
                 <div class="job-title">{job['title']}</div>
@@ -288,7 +324,7 @@ class SaraminCrawler:
                     🎓 {job['education']} | 
                     ⏰ {job['deadline']}
                 </div>
-                <a href="{full_link}" class="btn" target="_blank">지원하기 →</a>
+                <a href="{job['link']}" class="btn" target="_blank">지원하기 →</a>
             </div>
             """
             
@@ -389,7 +425,7 @@ class SaraminCrawler:
 
             keyword = config.pop('keyword', '데이터')  # keyword 추출
             
-            jobs = self.search_jobs(keyword=keyword, max_pages=2, **config)
+            jobs = self.search_jobs(keyword=keyword, **config)
             all_jobs.extend(jobs)
             print(f"✅ {len(jobs)}개 공고 수집")
 
@@ -420,7 +456,6 @@ if __name__ == "__main__":
     # # 예시 1: 이곳에 내가 검색하고 싶은 채용 공고 조건 넣기!! (한번에 3가지까지만 가능)
     # jobs = crawler.search_jobs(
     #     keyword="병원 데이터",
-    #     max_pages=1,
     #     salary_min="3000만원~",           # 3000만원 이상
     #     company_types=["대기업", "중견기업"],   # 대기업, 중견기업만
     #     job_types=["정규직"],              # 정규직만
